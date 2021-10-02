@@ -15,6 +15,7 @@ import org.apache.logging.log4j.Logger;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
@@ -146,7 +147,7 @@ public class ZFSUtil {
         // TODO: Sort by creation date
 
         List<String> matchedValues = null;
-        List<ZFSPropertyValue> lastProps = snapshotsData.get(snapshotsData.entrySet().size() - 1);
+        List<ZFSPropertyValue> lastProps = snapshotsData.get(Collections.max(snapshotsData.keySet()));
         if (lastProps == null) {
             return new ArrayList<>();
         }
@@ -188,7 +189,6 @@ public class ZFSUtil {
         cmdRes.setCommandResult(res);
 
         if (onlyProperties != null && onlyProperties.length >= 1) {
-            int lineNum = 0;
             List<String> lines = res.getOutputLines();
             if (lines != null && !lines.isEmpty()) {
                 LOGGER.debug("Processing " + lines.size() + " lines");
@@ -201,6 +201,7 @@ public class ZFSUtil {
                 Pattern pattern = Pattern.compile(patternStr + "\\s*");
                 LOGGER.debug("Created pattern: " + pattern.pattern());
 
+                int lineNum = 0;
                 for (String line : lines) {
                     lineNum++;
                     Matcher m = pattern.matcher(line.trim());
