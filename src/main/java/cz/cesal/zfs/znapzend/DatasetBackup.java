@@ -9,6 +9,6 @@ import java.util.List;
 @Data
 public class DatasetBackup extends Dataset {
 
-    List<String> destinations = new ArrayList<>();
+    List<BackupDestination> destinations = new ArrayList<>();
 
 }

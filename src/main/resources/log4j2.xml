@@ -7,16 +7,28 @@
         <Property name="LOG_DATEFORMAT_PATTERN">dd.MM.yyyy HH:mm:ss.SSS</Property>
         <Property name="CONSOLE_LOG_PATTERN">%d [%-6p] %F:%L – %m%n</Property>
     </Properties>
+
     <Appenders>
         <Console name="console" target="SYSTEM_OUT" follow="true">
             <ThresholdFilter level="DEBUG" onMatch="ACCEPT" onMismatch="DENY"/>
             <PatternLayout pattern="${CONSOLE_LOG_PATTERN}"/>
         </Console>
+
+        <RollingFile name="resultCommandsFile" fileName="sync-commands.sh" filePattern="sync-commands.sh">
+            <Policies>
+                <SizeBasedTriggeringPolicy size="100 MB"/>
+            </Policies>
+        </RollingFile>
+
     </Appenders>
 
     <Loggers>
         <Logger name="cz.cesal" level="debug" additivity="false">
             <AppenderRef ref="console"/>
+        </Logger>
+
+        <Logger name="resultCommands" level="debug" additivity="true">
+            <AppenderRef ref="resultCommandsFile"/>
         </Logger>
 
         <Root level="info">

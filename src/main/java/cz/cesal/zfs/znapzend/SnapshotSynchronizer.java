@@ -1,5 +1,6 @@
 package cz.cesal.zfs.znapzend;
 
+import cz.cesal.zfs.dto.ZFSProperty;
 import cz.cesal.zfs.dto.ZFSPropertySource;
 import cz.cesal.zfs.Dataset;
 import cz.cesal.zfs.Property;
@@ -12,6 +13,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
+import java.util.regex.Matcher;
 
 public class SnapshotSynchronizer {
 
@@ -79,7 +81,20 @@ public class SnapshotSynchronizer {
                     }
                     LOGGER.trace("--- destination " + backupName + ": " + destination);
 
-                    bkp.getDestinations().add(destination);
+                    BackupDestination bkpdest = new BackupDestination();
+
+                    Matcher mx = ZFSUtil.SSH_DATASET_PATTERN.matcher(destination);
+                    if (mx.matches()) {
+                        bkpdest.setDataset(mx.group(3));
+                        bkpdest.setRemoteHost(mx.group(2));
+                        bkpdest.setRemoteUser(mx.group(1));
+                        bkpdest.setType(DestinationType.REMOTE);
+                    } else {
+                        bkpdest.setDataset(destination);
+                        bkpdest.setType(DestinationType.LOCAL);
+                    }
+
+                    bkp.getDestinations().add(bkpdest);
                 }
             }
 
