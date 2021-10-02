@@ -19,7 +19,9 @@ public class CommandExecutor {
         LOGGER.debug("Executing '" + command + "'");
         CommandResult result = new CommandResult();
         ProcessBuilder builder = new ProcessBuilder();
-        builder.command(Arrays.stream(command.split(" +")).toList());
+        // builder.command(Arrays.stream(command.split(" +")).toList());
+        String[] arr = {"sh", "-c", command};
+        builder.command(Arrays.stream(arr).toList());
         Process process = builder.start();
         StreamGobbler streamGobbler = new StreamGobbler(process.getInputStream(), s -> result.getOutputLines().add(s));
         Executors.newSingleThreadExecutor().submit(streamGobbler);

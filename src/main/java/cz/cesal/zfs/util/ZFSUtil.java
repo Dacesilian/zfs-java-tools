@@ -1,22 +1,20 @@
 package cz.cesal.zfs.util;
 
 import cz.cesal.util.CommandExecutor;
+import cz.cesal.util.CommandResult;
+import cz.cesal.zfs.Dataset;
+import cz.cesal.zfs.Property;
 import cz.cesal.zfs.dto.ZFSCommandResult;
 import cz.cesal.zfs.dto.ZFSProperty;
 import cz.cesal.zfs.dto.ZFSPropertySource;
-import cz.cesal.zfs.Dataset;
-import cz.cesal.zfs.Property;
-import cz.cesal.util.CommandResult;
-import cz.cesal.util.StreamGobbler;
 import cz.cesal.zfs.dto.ZFSPropertyValue;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
-import java.util.concurrent.Executors;
+import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -25,6 +23,7 @@ public class ZFSUtil {
     private static Logger LOGGER = LogManager.getLogger(ZFSUtil.class);
 
     private static final Pattern ZFS_GET_PATTERN = Pattern.compile("^\\s*(.+?)\\s+(.+?)\\s+(?:(?:inherited from ([^ ]+))|(?:((?:-)|(?:.+))))\\s+(.+)$", Pattern.DOTALL);
+    private static final Pattern SSH_DATASET_PATTERN = Pattern.compile("([^@]+)@([^:]+):?(.+)?");
 
     private ZFSUtil() {
     }
@@ -35,14 +34,10 @@ public class ZFSUtil {
             throw new IOException("Bad exit code " + res.getCommandResult().getExitCode());
         }
         List<Dataset> out = new ArrayList<>();
-        List<String> lines = res.getCommandResult().getOutputLines();
-        LOGGER.debug("listDatasets - got " + lines.size() + " lines");
-        for (String line : lines) {
-            if (!line.equals("NAME")) {
-                Dataset ds = new Dataset();
-                ds.setName(line.trim());
-                out.add(ds);
-            }
+        for (ZFSPropertyValue v : res.getAllValuesMerged()) {
+            Dataset ds = new Dataset();
+            ds.setName(v.getMatchedValues().get(0).trim());
+            out.add(ds);
         }
         LOGGER.debug("listDatasets - returning " + out.size() + " datasets");
         return out;
@@ -105,23 +100,29 @@ public class ZFSUtil {
         return out;
     }
 
-    public static List<Property> listSnapshots(Dataset dataset, String... onlyColumns) throws IOException, InterruptedException {
-        return listSnapshots(dataset.getName(), onlyColumns);
+    public static Map<Integer, List<ZFSPropertyValue>> listSnapshots(Dataset dataset) throws IOException, InterruptedException {
+        return listSnapshots(dataset.getName());
     }
 
-    public static List<Property> listSnapshots(String datasetName, String... onlyColumns) throws IOException, InterruptedException {
-        List<String> columnsList = new ArrayList<>();
-        if (onlyColumns != null) {
-            for (String s : onlyColumns) {
-                columnsList.add(s.toLowerCase());
-            }
+    public static Map<Integer, List<ZFSPropertyValue>> listSnapshots(String datasetName) throws IOException, InterruptedException {
+        ZFSCommandResult res = null;
+
+        Matcher mx = SSH_DATASET_PATTERN.matcher(datasetName);
+        ZFSProperty[] onlyProperties = {
+                ZFSProperty.datasetName, ZFSProperty.creation
+        };
+        if (mx.matches()) {
+            LOGGER.debug("listSnapshots - will use SSH to " + mx.group(2) + ", user " + mx.group(1) + ", dataset " + mx.group(3));
+            res = executeCommand(mx.group(1), mx.group(2), "zfs list -t snap " + mx.group(3), onlyProperties);
+        } else {
+            LOGGER.debug("listSnapshots - local dataset " + datasetName);
+            res = executeCommand("zfs list -t snap " + datasetName, onlyProperties);
         }
-        String cmd = "zfs list -t snap -H " + (columnsList.isEmpty() ? "" : "-o " + String.join(",", columnsList)) + " " + datasetName;
-        ZFSCommandResult res = executeCommand(cmd);
         if (res.getCommandResult().getExitCode() != 0) {
             throw new IOException("Bad exit code " + res.getCommandResult().getExitCode());
         }
-        List<Property> out = new ArrayList<>();
+        return res.getValues();
+        /*List<Property> out = new ArrayList<>();
         List<String> lines = res.getCommandResult().getOutputLines();
         LOGGER.debug("listSnapshots - got " + lines.size() + " lines");
         for (String line : lines) {
@@ -153,20 +154,29 @@ public class ZFSUtil {
                 out.add(prop);
             }
         }
-        LOGGER.debug("listSnapshots - returning " + out.size() + " snapshots");
-        return out;
+        LOGGER.debug("listSnapshots - returning " + out.size() + " snapshots");*/
+        // return out;
     }
 
     public static ZFSCommandResult executeCommand(String command, ZFSProperty... onlyProperties) throws IOException, InterruptedException {
+        return executeCommand(null, null, command, onlyProperties);
+    }
+
+    public static ZFSCommandResult executeCommand(String sshUser, String sshHost, String command, ZFSProperty... onlyProperties) throws IOException, InterruptedException {
         if (onlyProperties != null && onlyProperties.length >= 1) {
             if (command.contains("-H") || command.contains("-o")) {
                 throw new IOException("Cannot have -H/-o specified when specific properties given");
             }
             List<String> propsList = new ArrayList<>();
             for (ZFSProperty p : onlyProperties) {
-                propsList.add(p.name());
+                propsList.add(p.getPropertyName());
             }
             command += " -H -o " + String.join(",", propsList);
+        }
+
+        if (sshUser != null && sshHost != null && !sshHost.isEmpty()) {
+            LOGGER.debug("Will execute command via SSH on " + sshHost + " user " + sshUser);
+            command = String.format("ssh -o batchMode=yes -o ConnectTimeout=300 '%s' '%s'", sshUser + "@" + sshHost, command);
         }
 
         CommandResult res = CommandExecutor.executeCommand(command);
@@ -179,18 +189,21 @@ public class ZFSUtil {
             for (ZFSProperty p : onlyProperties) {
                 regexs.add(p.getPropertyType().getPattern().pattern());
             }
-            String patternStr = String.join("\s{1,}", regexs);
-            Pattern pattern = Pattern.compile(patternStr);
+            String patternStr = String.join("\\s+", regexs);
+            Pattern pattern = Pattern.compile(patternStr + "\\s*");
             LOGGER.debug("Created pattern: " + pattern.pattern());
 
+            int lineNum = 0;
             List<String> lines = res.getOutputLines();
             LOGGER.debug("Processing " + lines.size() + " lines");
             for (String line : lines) {
-                Matcher m = pattern.matcher(line);
+                lineNum++;
+                Matcher m = pattern.matcher(line.trim());
                 if (!m.matches()) {
                     throw new IOException("Not matching line: " + line);
                 }
 
+                List<ZFSPropertyValue> props = new ArrayList<>();
                 LOGGER.trace("Matched line has " + m.groupCount() + " groups");
                 int groupNum = 0;
                 for (ZFSProperty p : onlyProperties) {
@@ -200,13 +213,15 @@ public class ZFSUtil {
 
                     for (int x = 1; x <= p.getPropertyType().getGroupsCount(); x++) {
                         String groupVal = m.group(groupNum + x);
-                        LOGGER.debug("Prop " + p.name() + " group " + (groupNum + x) + " -> " + groupVal);
+                        LOGGER.trace("Prop " + p.name() + " group " + (groupNum + x) + " -> " + groupVal);
                         propertyValue.getMatchedValues().add(groupVal);
                     }
                     groupNum += p.getPropertyType().getGroupsCount();
 
-                    cmdRes.getValues().add(propertyValue);
+                    props.add(propertyValue);
                 }
+
+                cmdRes.getValues().put(lineNum, props);
             }
         }
 
